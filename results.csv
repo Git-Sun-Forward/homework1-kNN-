@@ -1,0 +1,21 @@
+﻿distance,k,accuracy,distance_time_s,prediction_time_s,total_time_s
+manhattan distance,3,0.9073,14.2921,0.0895,14.3816
+manhattan distance,5,0.9063,14.2921,0.0924,14.3845
+manhattan distance,7,0.8983,14.2921,0.093,14.3852
+manhattan distance,11,0.89,14.2921,0.0992,14.3914
+manhattan distance,21,0.8777,14.2921,0.0865,14.3786
+euclidean distance,3,0.9203,0.1021,0.0811,0.1832
+euclidean distance,5,0.918,0.1021,0.0924,0.1945
+euclidean distance,7,0.9143,0.1021,0.0965,0.1986
+euclidean distance,11,0.9067,0.1021,0.0876,0.1897
+euclidean distance,21,0.8943,0.1021,0.0879,0.19
+chebyshev distance,3,0.5987,14.2895,0.0785,14.3681
+chebyshev distance,5,0.612,14.2895,0.0838,14.3733
+chebyshev distance,7,0.612,14.2895,0.0915,14.3811
+chebyshev distance,11,0.601,14.2895,0.0863,14.3759
+chebyshev distance,21,0.598,14.2895,0.0816,14.3711
+p=4 minkowski distance,3,0.9247,68.0519,0.091,68.143
+p=4 minkowski distance,5,0.9283,68.0519,0.0851,68.137
+p=4 minkowski distance,7,0.9273,68.0519,0.09,68.142
+p=4 minkowski distance,11,0.9177,68.0519,0.0964,68.1484
+p=4 minkowski distance,21,0.907,68.0519,0.0875,68.1395

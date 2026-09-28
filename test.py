@@ -1,4 +1,5 @@
 import os, sys
+import csv
 import time
 import numpy as np
 import matplotlib.pyplot as plt
@@ -38,31 +39,42 @@ def euclidean_distance_matrix(A, B):
     return np.sqrt(D2)
 
 
-def manhattan_distance_matrix(A, B):
-    """曼哈顿距离 (L1): D[i,j] = sum_k |A[i,k] - B[j,k]|"""
+def _pairwise_distance(A, B, p, chunk=32):
+    """分块广播计算两两距离，避免一次性构造 (m, n, d) 的大数组导致内存爆炸。
+
+    返回 D，形状 (m, n)，D[i, j] = 样本 A[i] 与 B[j] 之间的距离。
+
+    p = 1     -> L1 (曼哈顿距离)
+    p = inf   -> L∞ (切比雪夫距离)
+    其他      -> 闵可夫斯基距离 (sum |x-y|^p)^(1/p)
+
+    每次只处理 chunk 个 B 样本，用三维广播 (chunk, m, d) 一次算完这一批
+    与所有 A 样本的距离，再沿特征维归约，从而用少量循环代替原来的逐维循环。
+    """
+    if p==2:
+        return euclidean_distance_matrix(A, B)
+    A = np.asarray(A)
+    B = np.asarray(B)
     m, n = A.shape[0], B.shape[0]
-    D = np.zeros((m, n), dtype=A.dtype)
-    for k in range(A.shape[1]):
-        D += np.abs(A[:, k, None] - B[None, :, k])
+    D = np.empty((m, n), dtype=A.dtype)
+    for start in range(0, n, chunk):
+        Bc = B[start:start + chunk]                 # (c, d)
+        diff = A[None, :, :] - Bc[:, None, :]       # (c, m, d)
+        np.abs(diff, out=diff)                      # 原地取绝对值，省内存
+        if p == 1:
+            D[:, start:start + chunk] = diff.sum(axis=2).T
+        elif np.isinf(p):
+            D[:, start:start + chunk] = diff.max(axis=2).T
+        else:
+            diff **= p                              # 原地求 p 次方
+            D[:, start:start + chunk] = diff.sum(axis=2).T ** (1.0 / p)
     return D
+"""
+p=1即为曼哈顿距离
+p=np.inf即为Linf范数距离
+p=4即为p=4的闵可夫斯基距离
+"""
 
-
-def chebyshev_distance_matrix(A, B):
-    """L∞ 范数距离 (切比雪夫距离): D[i,j] = max_k |A[i,k] - B[j,k]|"""
-    m, n = A.shape[0], B.shape[0]
-    D = np.zeros((m, n), dtype=A.dtype)
-    for k in range(A.shape[1]):
-        D = np.maximum(D, np.abs(A[:, k, None] - B[None, :, k]))
-    return D
-
-
-def minkowski_distance_matrix(A, B, p=4):
-    """闵可夫斯基距离: D[i,j] = (sum_k |A[i,k] - B[j,k]|^p)^(1/p)"""
-    m, n = A.shape[0], B.shape[0]
-    D = np.zeros((m, n), dtype=A.dtype)
-    for k in range(A.shape[1]):
-        D += np.abs(A[:, k, None] - B[None, :, k]) ** p
-    return D ** (1.0 / p)
 
 def nearest_neighbor_predict(dist_matrix, train_labels):
     """最近邻分类：对距离矩阵的每一行，返回最小值对应的训练标签。
@@ -101,27 +113,70 @@ def knn_predict(dist_matrix, train_labels, k):
     return pred
 
 
-# 创建 kNN 数组，自动循环分类
-kNN = [3, 5, 7, 11, 21]
+def save_results_to_csv(rows, filename):
+    """把所有结果行写入 CSV 表格。
 
-# 进行分类
-labels_A = np.asarray(dataset_A.labels)
-labels_B = np.asarray(dataset_B.labels)
+    参数:
+        rows:     list of dict，每个 dict 的 key 作为表头，value 作为单元格内容。
+        filename: 输出 CSV 文件的路径。
+    """
+    if not rows:
+        print('No results to save.')
+        return
+    fieldnames = list(rows[0].keys())
+    with open(filename, 'w', newline='', encoding='utf-8-sig') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f'Results saved to {filename}')
 
-# 计时（循环外）：距离矩阵对所有 k 都相同，只需计算一次
-start = time.perf_counter()
-distance = manhattan_distance_matrix(matrix_A, matrix_B)
-time_dist = time.perf_counter() - start
-print(f'Distance computation time: {time_dist:.4f} s')
+def old_main():
+    # 创建 kNN 数组和p字典，自动循环分类
+    kNN = [3, 5, 7, 11, 21]
+    name_map={
+        2:"euclidean distance",
+        1:"manhattan distance",
+        4:"p=4 minkowski distance",
+        np.inf:"chebyshev distance"
+    }
+    pvalue=[1,2,np.inf,4]
 
-# distance 形状为 (train, test)，转置后每一行是一个测试样本 -> (test, train)
-# 计时（循环内）：对每个 k 单独计时预测，total = 距离时间 + 预测时间
-for k in kNN:
-    start = time.perf_counter()
-    pred_labels = knn_predict(distance.T, labels_A, k)
-    time_predict = time.perf_counter() - start
-    total_time = time_dist + time_predict
+    # 进行分类
+    labels_A = np.asarray(dataset_A.labels)
+    labels_B = np.asarray(dataset_B.labels)
 
-    accuracy = np.mean(pred_labels == labels_B)
-    print(f'k={k}: accuracy={accuracy:.4f}, prediction time={time_predict:.4f} s, '
-          f'total time={total_time:.4f} s')
+    # 收集所有结果行，最后统一写入 CSV
+    rows = []
+
+    for p in pvalue:
+        # 计时（循环外）：距离矩阵对所有 k 都相同，只需计算一次
+        start = time.perf_counter()
+        distance = _pairwise_distance(matrix_A, matrix_B,p)
+        time_dist = time.perf_counter() - start
+        print('{} computation time: {:.4f} s'.format(name_map.get(p),time_dist))
+
+        # distance 形状为 (train, test)，转置后每一行是一个测试样本 -> (test, train)
+        # 计时（循环内）：对每个 k 单独计时预测，total = 距离时间 + 预测时间
+        for k in kNN:
+            start = time.perf_counter()
+            pred_labels = knn_predict(distance.T, labels_A, k)
+            time_predict = time.perf_counter() - start
+            total_time = time_dist + time_predict
+
+            accuracy = float(np.mean(pred_labels == labels_B))
+            print('for {} k={}: accuracy={:.4f}, prediction time={:.4f} s, total time={:.4f} s'.format(name_map.get(p),k,accuracy,time_predict,total_time))
+
+            rows.append({
+                'distance': name_map.get(p),
+                'k': k,
+                'accuracy': round(accuracy, 4),
+                'distance_time_s': round(time_dist, 4),
+                'prediction_time_s': round(time_predict, 4),
+                'total_time_s': round(total_time, 4),
+            })
+
+    # 把所有 print 的数据输出为 CSV 表格
+    save_results_to_csv(rows, 'results.csv')
+
+if __name__ == "__main__":
+    old_main()
